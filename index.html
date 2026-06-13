@@ -6,259 +6,470 @@
 <title>どうぶつ進化ゲーム</title>
 
 <style>
+*{
+    box-sizing:border-box;
+}
+
 body{
     margin:0;
     overflow:hidden;
     background:#87ceeb;
     touch-action:none;
-    font-family:sans-serif;
+    font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    user-select:none;
 }
 
 canvas{
     display:block;
-    background:linear-gradient(#87ceeb,#dff7ff);
+    width:100vw;
+    height:100vh;
+    background:linear-gradient(#87ceeb 0%,#dff7ff 46%,#f7dfae 46%,#f5c16c 100%);
 }
 
 #score{
     position:absolute;
     top:10px;
     left:10px;
+    z-index:2;
+    min-width:92px;
     font-size:28px;
-    font-weight:bold;
-    background:white;
+    font-weight:800;
+    color:#333;
+    background:rgba(255,255,255,.9);
     padding:8px 15px;
-    border-radius:10px;
+    border-radius:14px;
+    box-shadow:0 4px 12px rgba(0,0,0,.15);
+}
+
+#next{
+    position:absolute;
+    top:10px;
+    right:10px;
+    z-index:2;
+    font-size:18px;
+    font-weight:800;
+    color:#333;
+    background:rgba(255,255,255,.9);
+    padding:8px 14px;
+    border-radius:14px;
+    box-shadow:0 4px 12px rgba(0,0,0,.15);
+}
+
+#message{
+    position:absolute;
+    inset:0;
+    z-index:3;
+    display:none;
+    align-items:center;
+    justify-content:center;
+    padding:24px;
+    background:rgba(0,0,0,.45);
+}
+
+#message.show{
+    display:flex;
+}
+
+.panel{
+    width:min(90vw,380px);
+    text-align:center;
+    color:#333;
+    background:rgba(255,255,255,.96);
+    padding:28px 24px;
+    border-radius:24px;
+    box-shadow:0 16px 48px rgba(0,0,0,.25);
+}
+
+.panel h1{
+    margin:0 0 10px;
+    font-size:34px;
+}
+
+.panel p{
+    margin:8px 0 20px;
+    font-size:18px;
+    font-weight:700;
+}
+
+.panel button{
+    appearance:none;
+    border:0;
+    border-radius:999px;
+    background:#ff9f1c;
+    color:#fff;
+    font-size:18px;
+    font-weight:800;
+    padding:12px 24px;
+    cursor:pointer;
+    box-shadow:0 6px 0 #d97706;
+}
+
+.panel button:active{
+    transform:translateY(4px);
+    box-shadow:0 2px 0 #d97706;
 }
 </style>
 </head>
 <body>
 
 <div id="score">0</div>
+<div id="next">NEXT 🐭</div>
+<div id="message" aria-live="polite">
+    <div class="panel">
+        <h1>ゲームオーバー</h1>
+        <p id="finalScore">スコア 0</p>
+        <button id="restart" type="button">もう一度</button>
+    </div>
+</div>
 <canvas id="game"></canvas>
 
 <script>
-const canvas = document.getElementById("game");
-const ctx = canvas.getContext("2d");
+(() => {
+    "use strict";
 
-function resize(){
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-}
-resize();
-window.addEventListener("resize",resize);
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    const scoreEl = document.getElementById("score");
+    const nextEl = document.getElementById("next");
+    const messageEl = document.getElementById("message");
+    const finalScoreEl = document.getElementById("finalScore");
+    const restartBtn = document.getElementById("restart");
 
-const scoreEl = document.getElementById("score");
+    const animals = [
+        "🐭","🐹","🐰","🐱","🐶",
+        "🦊","🐼","🐻","🐨","🐷",
+        "🐸","🐵","🦁","🐯","🐮",
+        "🐲","🦄","🐳"
+    ];
 
-let score = 0;
+    const gravity = 0.28;
+    const airDrag = 0.998;
+    const groundFriction = 0.88;
+    const wallFriction = 0.45;
+    const dangerLineY = 92;
+    const spawnY = 58;
+    const spawnCooldownMs = 420;
+    const gameOverGraceMs = 1400;
+    const maxBalls = 180;
 
-const animals = [
-    "🐭",
-    "🐹",
-    "🐰",
-    "🐱",
-    "🐶",
-    "🦊",
-    "🐼",
-    "🐻",
-    "🦁",
-    "🐯"
-];
+    let width = 0;
+    let height = 0;
+    let score = 0;
+    let balls = [];
+    let nextLevel = 0;
+    let lastSpawnAt = 0;
+    let gameOver = false;
+    let dangerStartedAt = 0;
+    let audioContext = null;
 
-const gravity = 0.25;
-const balls = [];
-
-class AnimalBall{
-    constructor(x,y,level){
-        this.x=x;
-        this.y=y;
-        this.level=level;
-
-        this.radius=25+level*6;
-
-        this.vx=(Math.random()-0.5)*2;
-        this.vy=0;
-
-        this.remove=false;
+    function resize(){
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        width = window.innerWidth;
+        height = window.innerHeight;
+        canvas.width = Math.floor(width * dpr);
+        canvas.height = Math.floor(height * dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
 
-    update(){
+    function clamp(value, min, max){
+        return Math.max(min, Math.min(max, value));
+    }
 
-        this.vy+=gravity;
+    function initAudio(){
+        if(audioContext) return;
+        const AudioCtor = window.AudioContext || window.webkitAudioContext;
+        if(!AudioCtor) return;
+        audioContext = new AudioCtor();
+    }
 
-        this.x+=this.vx;
-        this.y+=this.vy;
+    function playSound(type){
+        initAudio();
+        if(!audioContext) return;
 
-        if(this.x<this.radius){
-            this.x=this.radius;
-            this.vx*=-0.8;
+        const now = audioContext.currentTime;
+        const oscillator = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+
+        const sound = {
+            drop: { frequency: 360, endFrequency: 220, duration: 0.08, volume: 0.08, wave: "sine" },
+            merge: { frequency: 520, endFrequency: 880, duration: 0.16, volume: 0.12, wave: "triangle" },
+            over: { frequency: 180, endFrequency: 70, duration: 0.45, volume: 0.16, wave: "sawtooth" }
+        }[type];
+
+        if(!sound) return;
+
+        oscillator.type = sound.wave;
+        oscillator.frequency.setValueAtTime(sound.frequency, now);
+        oscillator.frequency.exponentialRampToValueAtTime(sound.endFrequency, now + sound.duration);
+
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(sound.volume, now + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + sound.duration);
+
+        oscillator.connect(gain);
+        gain.connect(audioContext.destination);
+        oscillator.start(now);
+        oscillator.stop(now + sound.duration + 0.03);
+    }
+
+    class AnimalBall{
+        constructor(x, y, level){
+            this.x = x;
+            this.y = y;
+            this.level = clamp(level, 0, animals.length - 1);
+            this.radius = 23 + this.level * 3.8;
+            this.vx = (Math.random() - 0.5) * 1.4;
+            this.vy = 0;
+            this.remove = false;
         }
 
-        if(this.x>canvas.width-this.radius){
-            this.x=canvas.width-this.radius;
-            this.vx*=-0.8;
+        update(){
+            this.vy += gravity;
+            this.vx *= airDrag;
+
+            this.x += this.vx;
+            this.y += this.vy;
+
+            if(this.x < this.radius){
+                this.x = this.radius;
+                this.vx = Math.abs(this.vx) * wallFriction;
+            }
+
+            if(this.x > width - this.radius){
+                this.x = width - this.radius;
+                this.vx = -Math.abs(this.vx) * wallFriction;
+            }
+
+            if(this.y > height - this.radius){
+                this.y = height - this.radius;
+                this.vy = 0;
+                this.vx *= groundFriction;
+            }
         }
 
-        if(this.y>canvas.height-this.radius){
-            this.y=canvas.height-this.radius;
-            this.vy*=-0.6;
+        draw(){
+            const fontSize = this.radius * 1.85;
+
+            ctx.save();
+            ctx.font = `${fontSize}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",serif`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.shadowColor = "rgba(0,0,0,.22)";
+            ctx.shadowBlur = 8;
+            ctx.shadowOffsetY = 3;
+            ctx.fillText(animals[this.level], this.x, this.y + this.radius * 0.02);
+            ctx.restore();
         }
     }
 
-    draw(){
+    function chooseNextLevel(){
+        const roll = Math.random();
+        if(roll > 0.94) return 2;
+        if(roll > 0.78) return 1;
+        return 0;
+    }
 
+    function updateNext(){
+        nextEl.textContent = `NEXT ${animals[nextLevel]}`;
+    }
+
+    function spawn(x){
+        const now = performance.now();
+        if(gameOver || balls.length >= maxBalls || now - lastSpawnAt < spawnCooldownMs) return;
+
+        const radius = 23 + nextLevel * 3.8;
+        const safeX = clamp(Number.isFinite(x) ? x : width / 2, radius, width - radius);
+
+        balls.push(new AnimalBall(safeX, spawnY, nextLevel));
+        lastSpawnAt = now;
+        nextLevel = chooseNextLevel();
+        updateNext();
+        playSound("drop");
+    }
+
+    function mergeCheck(){
+        const additions = [];
+
+        for(let i = 0; i < balls.length; i++){
+            const a = balls[i];
+            if(a.remove) continue;
+
+            for(let j = i + 1; j < balls.length; j++){
+                const b = balls[j];
+                if(b.remove || a.level !== b.level) continue;
+
+                const dx = b.x - a.x;
+                const dy = b.y - a.y;
+                const dist = Math.hypot(dx, dy);
+
+                if(dist < (a.radius + b.radius) * 0.76){
+                    if(a.level < animals.length - 1){
+                        const merged = new AnimalBall(
+                            (a.x + b.x) / 2,
+                            (a.y + b.y) / 2,
+                            a.level + 1
+                        );
+                        merged.vx = (a.vx + b.vx) * 0.35;
+                        merged.vy = Math.min((a.vy + b.vy) * 0.15, 1.5);
+                        additions.push(merged);
+
+                        score += (a.level + 1) * 10;
+                        scoreEl.textContent = score;
+                        playSound("merge");
+                    }
+
+                    a.remove = true;
+                    b.remove = true;
+                    break;
+                }
+            }
+        }
+
+        balls = balls.filter(ball => !ball.remove);
+        if(additions.length > 0){
+            balls.push(...additions);
+        }
+    }
+
+    function collision(){
+        for(let i = 0; i < balls.length; i++){
+            for(let j = i + 1; j < balls.length; j++){
+                const a = balls[i];
+                const b = balls[j];
+                const dx = b.x - a.x;
+                const dy = b.y - a.y;
+                const dist = Math.hypot(dx, dy);
+                const min = a.radius + b.radius;
+
+                if(dist > 0 && dist < min){
+                    const overlap = (min - dist) / 2;
+                    const nx = dx / dist;
+                    const ny = dy / dist;
+
+                    a.x -= nx * overlap;
+                    a.y -= ny * overlap;
+                    b.x += nx * overlap;
+                    b.y += ny * overlap;
+
+                    const relativeVelocity = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
+                    if(relativeVelocity < 0){
+                        const impulse = relativeVelocity * 0.18;
+                        a.vx += impulse * nx;
+                        a.vy += impulse * ny;
+                        b.vx -= impulse * nx;
+                        b.vy -= impulse * ny;
+                    }
+                }
+            }
+        }
+    }
+
+    function drawBox(){
+        ctx.save();
+        ctx.strokeStyle = "rgba(160,74,20,.9)";
+        ctx.lineWidth = 8;
+        ctx.lineCap = "round";
         ctx.beginPath();
-        ctx.arc(this.x,this.y,this.radius,0,Math.PI*2);
-        ctx.fillStyle="#fff";
-        ctx.fill();
-        ctx.strokeStyle="#444";
-        ctx.lineWidth=3;
+        ctx.moveTo(4, dangerLineY);
+        ctx.lineTo(4, height - 4);
+        ctx.lineTo(width - 4, height - 4);
+        ctx.lineTo(width - 4, dangerLineY);
         ctx.stroke();
 
-        ctx.font=(this.radius*1.2)+"px serif";
-        ctx.textAlign="center";
-        ctx.textBaseline="middle";
-        ctx.fillText(
-            animals[this.level],
-            this.x,
-            this.y+2
-        );
+        ctx.strokeStyle = "rgba(255,40,40,.9)";
+        ctx.lineWidth = 4;
+        ctx.setLineDash([14, 10]);
+        ctx.beginPath();
+        ctx.moveTo(0, dangerLineY);
+        ctx.lineTo(width, dangerLineY);
+        ctx.stroke();
+
+        ctx.fillStyle = "rgba(255,40,40,.9)";
+        ctx.font = "bold 14px system-ui,sans-serif";
+        ctx.textAlign = "right";
+        ctx.textBaseline = "bottom";
+        ctx.fillText("ここを超えるとピンチ！", width - 12, dangerLineY - 8);
+        ctx.restore();
     }
-}
 
-function spawn(x){
+    function checkGameOver(){
+        if(gameOver) return;
 
-    balls.push(
-        new AnimalBall(
-            x,
-            60,
-            0
-        )
-    );
-}
+        const crowded = balls.some(ball => {
+            const settled = Math.abs(ball.vy) < 0.8;
+            return settled && ball.y - ball.radius < dangerLineY;
+        });
 
-canvas.addEventListener("pointerdown",e=>{
-    spawn(e.clientX);
-});
+        if(!crowded){
+            dangerStartedAt = 0;
+            return;
+        }
 
-function mergeCheck(){
+        const now = performance.now();
+        if(dangerStartedAt === 0){
+            dangerStartedAt = now;
+            return;
+        }
 
-    for(let i=0;i<balls.length;i++){
+        if(now - dangerStartedAt >= gameOverGraceMs){
+            endGame();
+        }
+    }
 
-        const a=balls[i];
+    function endGame(){
+        gameOver = true;
+        finalScoreEl.textContent = `スコア ${score}`;
+        messageEl.classList.add("show");
+        playSound("over");
+    }
 
-        for(let j=i+1;j<balls.length;j++){
+    function restart(){
+        balls = [];
+        score = 0;
+        nextLevel = 0;
+        lastSpawnAt = 0;
+        dangerStartedAt = 0;
+        gameOver = false;
+        scoreEl.textContent = "0";
+        updateNext();
+        messageEl.classList.remove("show");
+    }
 
-            const b=balls[j];
+    function gameLoop(){
+        ctx.clearRect(0, 0, width, height);
+        drawBox();
 
-            if(a.level!==b.level) continue;
-
-            const dx=b.x-a.x;
-            const dy=b.y-a.y;
-
-            const dist=Math.hypot(dx,dy);
-
-            if(dist<a.radius+b.radius){
-
-                if(a.level<animals.length-1){
-
-                    const nx=(a.x+b.x)/2;
-                    const ny=(a.y+b.y)/2;
-
-                    balls.push(
-                        new AnimalBall(
-                            nx,
-                            ny,
-                            a.level+1
-                        )
-                    );
-
-                    score+=(a.level+1)*10;
-
-                    scoreEl.textContent=score;
-                }
-
-                a.remove=true;
-                b.remove=true;
+        if(!gameOver){
+            for(const ball of balls){
+                ball.update();
             }
+            collision();
+            mergeCheck();
+            checkGameOver();
         }
+
+        for(const ball of balls){
+            ball.draw();
+        }
+
+        requestAnimationFrame(gameLoop);
     }
 
-    for(let i=balls.length-1;i>=0;i--){
-        if(balls[i].remove){
-            balls.splice(i,1);
+    canvas.addEventListener("pointerdown", event => {
+        event.preventDefault();
+        if(audioContext && audioContext.state === "suspended"){
+            audioContext.resume();
         }
-    }
-}
+        spawn(event.clientX);
+    }, { passive:false });
 
-function collision(){
+    restartBtn.addEventListener("click", restart);
+    window.addEventListener("resize", resize);
 
-    for(let i=0;i<balls.length;i++){
-
-        for(let j=i+1;j<balls.length;j++){
-
-            const a=balls[i];
-            const b=balls[j];
-
-            const dx=b.x-a.x;
-            const dy=b.y-a.y;
-
-            const dist=Math.hypot(dx,dy);
-
-            const min=a.radius+b.radius;
-
-            if(dist<min && dist>0){
-
-                const overlap=(min-dist)/2;
-
-                const nx=dx/dist;
-                const ny=dy/dist;
-
-                a.x-=nx*overlap;
-                a.y-=ny*overlap;
-
-                b.x+=nx*overlap;
-                b.y+=ny*overlap;
-            }
-        }
-    }
-}
-
-function drawLine(){
-    ctx.strokeStyle="red";
-    ctx.lineWidth=4;
-
-    ctx.beginPath();
-    ctx.moveTo(0,70);
-    ctx.lineTo(canvas.width,70);
-    ctx.stroke();
-}
-
-function gameLoop(){
-
-    ctx.clearRect(
-        0,
-        0,
-        canvas.width,
-        canvas.height
-    );
-
-    drawLine();
-
-    balls.forEach(ball=>{
-        ball.update();
-    });
-
-    collision();
-    mergeCheck();
-
-    balls.forEach(ball=>{
-        ball.draw();
-    });
-
-    requestAnimationFrame(gameLoop);
-}
-
-gameLoop();
+    resize();
+    updateNext();
+    gameLoop();
+})();
 </script>
 
 </body>
