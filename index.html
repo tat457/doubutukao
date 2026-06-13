@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<title>どうぶつ進化ゲーム</title>
+
+<style>
+body{
+    margin:0;
+    overflow:hidden;
+    background:#87ceeb;
+    touch-action:none;
+    font-family:sans-serif;
+}
+
+canvas{
+    display:block;
+    background:linear-gradient(#87ceeb,#dff7ff);
+}
+
+#score{
+    position:absolute;
+    top:10px;
+    left:10px;
+    font-size:28px;
+    font-weight:bold;
+    background:white;
+    padding:8px 15px;
+    border-radius:10px;
+}
+</style>
+</head>
+<body>
+
+<div id="score">0</div>
+<canvas id="game"></canvas>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+function resize(){
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener("resize",resize);
+
+const scoreEl = document.getElementById("score");
+
+let score = 0;
+
+const animals = [
+    "🐭",
+    "🐹",
+    "🐰",
+    "🐱",
+    "🐶",
+    "🦊",
+    "🐼",
+    "🐻",
+    "🦁",
+    "🐯"
+];
+
+const gravity = 0.25;
+const balls = [];
+
+class AnimalBall{
+    constructor(x,y,level){
+        this.x=x;
+        this.y=y;
+        this.level=level;
+
+        this.radius=25+level*6;
+
+        this.vx=(Math.random()-0.5)*2;
+        this.vy=0;
+
+        this.remove=false;
+    }
+
+    update(){
+
+        this.vy+=gravity;
+
+        this.x+=this.vx;
+        this.y+=this.vy;
+
+        if(this.x<this.radius){
+            this.x=this.radius;
+            this.vx*=-0.8;
+        }
+
+        if(this.x>canvas.width-this.radius){
+            this.x=canvas.width-this.radius;
+            this.vx*=-0.8;
+        }
+
+        if(this.y>canvas.height-this.radius){
+            this.y=canvas.height-this.radius;
+            this.vy*=-0.6;
+        }
+    }
+
+    draw(){
+
+        ctx.beginPath();
+        ctx.arc(this.x,this.y,this.radius,0,Math.PI*2);
+        ctx.fillStyle="#fff";
+        ctx.fill();
+        ctx.strokeStyle="#444";
+        ctx.lineWidth=3;
+        ctx.stroke();
+
+        ctx.font=(this.radius*1.2)+"px serif";
+        ctx.textAlign="center";
+        ctx.textBaseline="middle";
+        ctx.fillText(
+            animals[this.level],
+            this.x,
+            this.y+2
+        );
+    }
+}
+
+function spawn(x){
+
+    balls.push(
+        new AnimalBall(
+            x,
+            60,
+            0
+        )
+    );
+}
+
+canvas.addEventListener("pointerdown",e=>{
+    spawn(e.clientX);
+});
+
+function mergeCheck(){
+
+    for(let i=0;i<balls.length;i++){
+
+        const a=balls[i];
+
+        for(let j=i+1;j<balls.length;j++){
+
+            const b=balls[j];
+
+            if(a.level!==b.level) continue;
+
+            const dx=b.x-a.x;
+            const dy=b.y-a.y;
+
+            const dist=Math.hypot(dx,dy);
+
+            if(dist<a.radius+b.radius){
+
+                if(a.level<animals.length-1){
+
+                    const nx=(a.x+b.x)/2;
+                    const ny=(a.y+b.y)/2;
+
+                    balls.push(
+                        new AnimalBall(
+                            nx,
+                            ny,
+                            a.level+1
+                        )
+                    );
+
+                    score+=(a.level+1)*10;
+
+                    scoreEl.textContent=score;
+                }
+
+                a.remove=true;
+                b.remove=true;
+            }
+        }
+    }
+
+    for(let i=balls.length-1;i>=0;i--){
+        if(balls[i].remove){
+            balls.splice(i,1);
+        }
+    }
+}
+
+function collision(){
+
+    for(let i=0;i<balls.length;i++){
+
+        for(let j=i+1;j<balls.length;j++){
+
+            const a=balls[i];
+            const b=balls[j];
+
+            const dx=b.x-a.x;
+            const dy=b.y-a.y;
+
+            const dist=Math.hypot(dx,dy);
+
+            const min=a.radius+b.radius;
+
+            if(dist<min && dist>0){
+
+                const overlap=(min-dist)/2;
+
+                const nx=dx/dist;
+                const ny=dy/dist;
+
+                a.x-=nx*overlap;
+                a.y-=ny*overlap;
+
+                b.x+=nx*overlap;
+                b.y+=ny*overlap;
+            }
+        }
+    }
+}
+
+function drawLine(){
+    ctx.strokeStyle="red";
+    ctx.lineWidth=4;
+
+    ctx.beginPath();
+    ctx.moveTo(0,70);
+    ctx.lineTo(canvas.width,70);
+    ctx.stroke();
+}
+
+function gameLoop(){
+
+    ctx.clearRect(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+
+    drawLine();
+
+    balls.forEach(ball=>{
+        ball.update();
+    });
+
+    collision();
+    mergeCheck();
+
+    balls.forEach(ball=>{
+        ball.draw();
+    });
+
+    requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+</script>
+
+</body>
+</html>
