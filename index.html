@@ -149,7 +149,7 @@ canvas{
     const dangerLineY = 92;
     const spawnY = 58;
     const spawnCooldownMs = 420;
-    const gameOverGraceMs = 1400;
+    const spawnSafeMs = 900;
     const maxBalls = 180;
 
     let width = 0;
@@ -159,8 +159,9 @@ canvas{
     let nextLevel = 0;
     let lastSpawnAt = 0;
     let gameOver = false;
-    let dangerStartedAt = 0;
     let audioContext = null;
+    let isPressing = false;
+    let pressX = 0;
 
     function resize(){
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -221,6 +222,7 @@ canvas{
             this.vx = (Math.random() - 0.5) * 1.4;
             this.vy = 0;
             this.remove = false;
+            this.createdAt = performance.now();
         }
 
         update(){
@@ -366,52 +368,37 @@ canvas{
 
     function drawBox(){
         ctx.save();
-        ctx.strokeStyle = "rgba(160,74,20,.9)";
+        ctx.strokeStyle = "rgba(160,74,20,.95)";
         ctx.lineWidth = 8;
         ctx.lineCap = "round";
         ctx.beginPath();
+        ctx.moveTo(4, dangerLineY);
+        ctx.lineTo(width - 4, dangerLineY);
         ctx.moveTo(4, dangerLineY);
         ctx.lineTo(4, height - 4);
         ctx.lineTo(width - 4, height - 4);
         ctx.lineTo(width - 4, dangerLineY);
         ctx.stroke();
 
-        ctx.strokeStyle = "rgba(255,40,40,.9)";
-        ctx.lineWidth = 4;
-        ctx.setLineDash([14, 10]);
-        ctx.beginPath();
-        ctx.moveTo(0, dangerLineY);
-        ctx.lineTo(width, dangerLineY);
-        ctx.stroke();
-
-        ctx.fillStyle = "rgba(255,40,40,.9)";
+        ctx.fillStyle = "rgba(160,74,20,.95)";
         ctx.font = "bold 14px system-ui,sans-serif";
         ctx.textAlign = "right";
         ctx.textBaseline = "bottom";
-        ctx.fillText("ここを超えるとピンチ！", width - 12, dangerLineY - 8);
+        ctx.fillText("オレンジ線を超えたらアウト！", width - 12, dangerLineY - 8);
         ctx.restore();
     }
 
     function checkGameOver(){
         if(gameOver) return;
 
-        const crowded = balls.some(ball => {
+        const now = performance.now();
+        const crossed = balls.some(ball => {
+            const oldEnough = now - ball.createdAt > spawnSafeMs;
             const settled = Math.abs(ball.vy) < 0.8;
-            return settled && ball.y - ball.radius < dangerLineY;
+            return oldEnough && settled && ball.y - ball.radius <= dangerLineY;
         });
 
-        if(!crowded){
-            dangerStartedAt = 0;
-            return;
-        }
-
-        const now = performance.now();
-        if(dangerStartedAt === 0){
-            dangerStartedAt = now;
-            return;
-        }
-
-        if(now - dangerStartedAt >= gameOverGraceMs){
+        if(crossed){
             endGame();
         }
     }
@@ -428,8 +415,8 @@ canvas{
         score = 0;
         nextLevel = 0;
         lastSpawnAt = 0;
-        dangerStartedAt = 0;
         gameOver = false;
+        isPressing = false;
         scoreEl.textContent = "0";
         updateNext();
         messageEl.classList.remove("show");
@@ -440,6 +427,10 @@ canvas{
         drawBox();
 
         if(!gameOver){
+            if(isPressing){
+                spawn(pressX);
+            }
+
             for(const ball of balls){
                 ball.update();
             }
@@ -455,13 +446,31 @@ canvas{
         requestAnimationFrame(gameLoop);
     }
 
-    canvas.addEventListener("pointerdown", event => {
+    function startPress(event){
         event.preventDefault();
         if(audioContext && audioContext.state === "suspended"){
             audioContext.resume();
         }
-        spawn(event.clientX);
-    }, { passive:false });
+        isPressing = true;
+        pressX = event.clientX;
+        spawn(pressX);
+    }
+
+    function movePress(event){
+        if(!isPressing) return;
+        event.preventDefault();
+        pressX = event.clientX;
+    }
+
+    function endPress(){
+        isPressing = false;
+    }
+
+    canvas.addEventListener("pointerdown", startPress, { passive:false });
+    canvas.addEventListener("pointermove", movePress, { passive:false });
+    canvas.addEventListener("pointerup", endPress);
+    canvas.addEventListener("pointercancel", endPress);
+    canvas.addEventListener("pointerleave", endPress);
 
     restartBtn.addEventListener("click", restart);
     window.addEventListener("resize", resize);
