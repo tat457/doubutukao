@@ -1,3 +1,4 @@
+```html
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -150,6 +151,7 @@ canvas{
     const spawnY = 58;
     const spawnCooldownMs = 420;
     const spawnSafeMs = 900;
+    const gameOverHoldMs = 900;
     const maxBalls = 180;
 
     let width = 0;
@@ -159,6 +161,7 @@ canvas{
     let nextLevel = 0;
     let lastSpawnAt = 0;
     let gameOver = false;
+    let dangerStartedAt = 0;
     let audioContext = null;
     let isPressing = false;
     let pressX = 0;
@@ -390,18 +393,45 @@ canvas{
         ctx.restore();
     }
 
+    function isStacked(ball){
+        if(ball.y + ball.radius >= height - 8){
+            return true;
+        }
+
+        return balls.some(other => {
+            if(other === ball || other.remove || other.y <= ball.y) return false;
+
+            const dx = other.x - ball.x;
+            const dy = other.y - ball.y;
+            const distance = Math.hypot(dx, dy);
+            const touching = distance <= ball.radius + other.radius + 6;
+            const aboveOther = ball.y + ball.radius <= other.y + other.radius;
+
+            return touching && aboveOther;
+        });
+    }
+
     function checkGameOver(){
         if(gameOver) return;
 
         const now = performance.now();
         const orangeStartY = getOrangeStartY();
-        const crossed = balls.some(ball => {
+        const stackedOverLine = balls.some(ball => {
             const oldEnough = now - ball.createdAt > spawnSafeMs;
-            const settled = Math.abs(ball.vy) < 0.8;
-            return oldEnough && settled && ball.y - ball.radius <= orangeStartY;
+            return oldEnough && ball.y - ball.radius <= orangeStartY && isStacked(ball);
         });
 
-        if(crossed){
+        if(!stackedOverLine){
+            dangerStartedAt = 0;
+            return;
+        }
+
+        if(dangerStartedAt === 0){
+            dangerStartedAt = now;
+            return;
+        }
+
+        if(now - dangerStartedAt >= gameOverHoldMs){
             endGame();
         }
     }
@@ -419,6 +449,7 @@ canvas{
         nextLevel = 0;
         lastSpawnAt = 0;
         gameOver = false;
+        dangerStartedAt = 0;
         isPressing = false;
         scoreEl.textContent = "0";
         updateNext();
@@ -486,3 +517,4 @@ canvas{
 
 </body>
 </html>
+```
